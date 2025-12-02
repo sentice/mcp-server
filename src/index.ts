@@ -1,11 +1,9 @@
 import "dotenv/config"
-import express from "express"
+import express, { Request, Response } from "express"
 import cors from "cors"
-import axios from "axios"
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
-import * as z from "zod/v4"
+import { registerMcpItems } from "./mcp/register.js"
 
 // ----------------------------------
 // CONFIG
@@ -17,46 +15,14 @@ console.log("🚀 Starting MCP Server (Streamable HTTP + Express)…")
 console.log("🔗 BACKEND_URL:", BACKEND_URL)
 
 // ----------------------------------
-// MCP INSTANCE (се креира само еднаш)
+// MCP INSTANCE
 // ----------------------------------
 const server = new McpServer({
   name: "sentice-mcp-server",
   version: "1.0.0",
 })
 
-// ----------------------------------
-// TOOLS
-// ----------------------------------
-server.registerTool(
-  "users_balance",
-  {
-    title: "Get users balance",
-    description: "Fetch users balance list from Adonis backend.",
-    inputSchema: {
-      filters: z.record(z.string(), z.unknown()).optional(),
-    },
-    outputSchema: {
-      data: z.unknown(),
-    },
-  },
-  async ({ filters }) => {
-    const response = await axios.post(`${BACKEND_URL}/users/balance`, {
-      filters: filters ?? {},
-    })
-
-    const output = { data: response.data }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(output, null, 2),
-        },
-      ],
-      structuredContent: output,
-    }
-  }
-)
+registerMcpItems(server);
 
 // ----------------------------------
 // EXPRESS + MCP STREAMABLE HTTP
@@ -67,31 +33,32 @@ async function main() {
   app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }))
   app.use(express.json({ limit: "10mb" }))
 
-  // Health check ендпоинт
+  // Health check
   app.get('/health', (req, res) => {
     res.status(200).send('OK');
   });
 
-  // Единствен MCP endpoint
-  app.post("/mcp", async (req, res) => {
-    // ✔ Усогласено со официјалниот пример
+  const mcpHandler = async (req: Request, res: Response) => {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true
     });
 
-    // ✔ Закачи cleanup функција за овој специфичен транспорт
     res.on("close", () => {
       transport.close();
     });
 
-    // ✔ Точен редослед според документацијата
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
-  });
+  };
+
+  app.get("/mcp", mcpHandler);
+  app.post("/mcp", mcpHandler);
+
 
   app.listen(PORT, () => {
-    console.log(`🎉 MCP Server running at http://0.0.0.0:${PORT}/mcp`)
+    console.log(`🎉 MCP Server running`)
+
   }).on("error", (error) => {
     console.error("❌ Server error:", error)
     process.exit(1)
